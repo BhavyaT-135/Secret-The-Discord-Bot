@@ -15,10 +15,41 @@ import re
 from database import *
 import pkg_resources
 import asyncio
+import aiml
 
 client = commands.Bot(command_prefix='*')
 status = cycle(['Scrabble', 'Chess'])
 players = {}
+
+# AI Chatbot
+STARTUP_FILE = "std-startup.xml"
+
+aiml_kernel = aiml.Kernel()
+if os.path.isfile("bot_brain.brn"):
+    aiml_kernel.bootstrap(brainFile="bot_brain.brn")
+else:
+    aiml_kernel.bootstrap(learnFiles="std-startup.xml", commands="load aiml b")
+    aiml_kernel.saveBrain("bot_brain.brn")
+
+
+@client.command()
+async def ask(ctx, *, question):
+    '''
+    - opens ai chatbot
+    '''
+
+    if question is None:
+        print("Empty message received.")
+        return
+
+    print("Message: " + str(question))
+
+    aiml_response = aiml_kernel.respond(question)
+    if aiml_response == '':
+        await ctx.send("I don't have a response for that, sorry.")
+    else:
+        print(aiml_response)
+        await ctx.send(aiml_response)
 
 
 @client.event
@@ -470,6 +501,145 @@ async def leaderboard(ctx):
     add_leaderboard(ctx.message.author.id, msg_sent.id, count)
     if(count == 11):
         await msg_sent.add_reaction(u"\u25B6")
+
+
+@client.event
+async def on_message_edit(before, after):
+    if(check_requests(after.id)):
+        update_requests(after.id, -1)
+
+
+@client.event
+async def on_command_error(ctx, error):
+    try:
+        await request_points(ctx)
+    except Exception as e:
+        print("Some shit happened: " + str(error))
+        print("Error from try catch : " + str(e))
+
+
+@client.command(pass_context=True)
+async def reset(ctx):
+    """- Resets the database."""
+    permission = False
+    roles = ctx.message.author.roles
+    for role in roles:
+        if(role.permissions.administrator):
+            permission = True
+
+    if(permission):
+        await reset_database()
+        await ctx.send("Database was reset!")
+    else:
+        await ctx.send("No permision!")
+
+
+async def format_user(user_name):
+    for i in range(len(user_name)):
+        if(user_name[i] != ' '):
+            break
+        else:
+            user_name = user_name[1:]
+
+    for i in user_name[::-1]:
+        if(i != " "):
+            break
+        else:
+            user_name = user_name[:-1]
+    return user_name
+
+
+async def request_points(ctx):
+    #print("here it go")
+    message_sent = ctx.message.content
+    if(message_sent[:12] == "*points add "):
+        message_sent = message_sent[12:]
+        split_message = re.split('\s+', message_sent)
+        users = ''
+        # print(split_message)
+        for i in range(0, len(split_message) - 1):
+            users += split_message[i]
+            users += ' '
+
+        users = users[:-1]
+        # print(users)
+        split_users = users.split(',')
+        saved_users = ''
+        # print(split_users)
+        for user in split_users:
+            user = await format_user(user)
+            # print(user)
+            if(user[:1] == '"' and user[-1:] == '"'):
+                user = user[1:]
+                user = user[:-1]
+                # print(user)
+                user_id = ctx.guild.get_member_named(user)
+                if(user_id == None):
+                    await ctx.send("The following user does not exist: " + str(user) + "\nPlease do not use white spaces between users and commas")
+                    return
+
+                saved_users += str(user_id.id)
+                saved_users += ' '
+            elif(user[:1] == "<"):
+                user = user.strip()
+                user = user[2:]
+                user = user[:-1]
+                user = user.replace("!", "")
+                if(user.isdigit()):
+                    found = client.get_user(int(user))
+                else:
+                    await ctx.send("The following user does not exist : " + str(user) + "\nPlease use comma between users!")
+                    return
+
+                if(found == None):
+                    await ctx.send("The following user does not exist : " + str(user) + "\nPlease use comma between users!")
+                    return
+
+                saved_users += str(user)
+                saved_users += ' '
+            elif(user[-1:] == ">"):
+                user = user.strip()
+                user = user[2:]
+                user = user[:-1]
+                user = user.replace("!", "")
+                if(user.isdigit()):
+                    found = client.get_user(int(user))
+                else:
+                    await ctx.send("The following user does not exist : " + str(user) + "\nPlease use comma between users!")
+                    return
+
+                found = client.get_user(user)
+                if(found == None):
+                    await ctx.send("The following user does not exist : " + str(user) + "\nPlease use comma between users!")
+                    return
+                saved_users += str(user)
+                saved_users += ' '
+            else:
+                # print("Ja")
+                user_id = ctx.guild.get_member_named(user)
+                if(user_id == None):
+                    await ctx.send("The following user does not exist : " + str(user))
+                    return
+                saved_users += str(user_id.id)
+                saved_users += ' '
+
+        insert_points_requests(ctx.message.id, saved_users, split_message[len(
+            split_message) - 1], 0, ctx.message.author.id)
+
+        roles = ctx.message.author.roles
+        permission = False
+
+        for role in roles:
+            if(role.name == "Manager" or role.permissions.administrator):
+                permission = True
+
+        if(not permission):
+            await ctx.message.add_reaction(u"\U0001F44D")
+        else:
+            users_req = saved_users.split()
+            for user in users_req:
+                add_points(user, split_message[len(split_message) - 1])
+            await ctx.send("Points added")
 
 
 @tasks.loop(seconds=200)
