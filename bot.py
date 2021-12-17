@@ -647,4 +647,4 @@ async def change_status():
     await client.change_presence(activity=discord.Game(next(status)))
 
 # Insert Your Token Here (Discord Developer Portal: https://discord.com/developers/applications)
-client.run("")
+client.run("NzYxOTE4NjQ3NTIyMTY0NzY3.X3hmCQ.lrr4XZY9SmJze2MBaKLZk8_IvgY")
