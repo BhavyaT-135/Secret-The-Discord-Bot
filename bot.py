@@ -1,14 +1,18 @@
 import discord
 import random
 import os
+import youtube_dl
+import wikipedia
 from discord.ext import commands, tasks
 from discord.utils import get
 from itertools import cycle
+import sqlite3
 from datetime import datetime
 import time
+import database
 import json
 import re
-from discord.ext import commands
+from database import *
 import pkg_resources
 import asyncio
 
@@ -111,6 +115,361 @@ async def unban(ctx, *, member):
             await ctx.send(f'Unbanned {user.name}#{user.discriminator}')
             # same as ctx.send(f'Banned {user.mention}')
             return
+
+
+# Magic 8Ball
+@client.command(aliases=['8ball'])
+async def _8ball(ctx, *, question):
+    '''
+    - Magic 8-Ball trivia.
+    '''
+    responces = ['It is certain.',
+                 'It is decidedly so.',
+                 'Without a doubt.',
+                 'Yes – definitely.',
+                 'You may rely on it.',
+                 'As I see it, yes.',
+                 'Most likely.',
+                 'Outlook good.',
+                 'Yes.',
+                 'Signs point to yes.',
+                 'Reply hazy, try again.',
+                 'Ask again later.',
+                 'Better not tell you now.',
+                 'Cannot predict now.',
+                 'Concentrate and ask again.',
+                 "Don't count on it.",
+                 'My reply is no.',
+                 'My sources say no.',
+                 'Outlook not so good.',
+                 'Very doubtful.']
+
+    await ctx.send(f':8ball:Question: {question}\n:8ball:Answer: {random.choice(responces)}')
+
+
+# Cogs Functions
+@client.command()
+async def load(ctx, extension):
+    '''
+    - Load the mentioned cogs file.
+    '''
+    client.load_extension(f'cogs.{extension}')
+    await ctx.send(f'{extension} Loaded')
+
+
+@client.command()
+async def unload(ctx, extension):
+    '''
+    - Unload the mentioned cogs file.
+    '''
+    client.unload_extension(f'cogs.{extension}')
+    await ctx.send(f'{extension} Unloaded')
+
+
+@client.command()
+async def reload(ctx, extension):
+    '''
+    - Reload the mentioned cogs file.
+    '''
+    client.unload_extension(f'cogs.{extension}')
+    client.load_extension(f'cogs.{extension}')
+    await ctx.send(f'{extension} Reloaded')
+
+
+# Music Player Function
+
+@client.command(name='join', help='- Join the voice channel.')
+async def join(ctx):
+
+    if not ctx.message.author.voice:
+        await ctx.send("You are not connected to a voice channel")
+        return
+
+    else:
+        channel = ctx.message.author.voice.channel
+        print(f"The bot has connected to {channel}\n")
+
+    await channel.connect()
+
+
+@client.command(pass_context=True)
+async def leave(ctx):
+    '''
+    - Disconnect from the voice channel.
+    '''
+
+    channel = ctx.message.author.voice.channel
+    voice = get(client.voice_clients, guild=ctx.guild)
+
+    if voice and voice.is_connected():
+        await voice.disconnect()
+        print(f"The bot has left {channel}")
+        await ctx.send(f"Left {channel}")
+    else:
+        print("Bot was told to leave voice channel, but was not in one")
+        await ctx.send("Don't think I am in a voice channel")
+
+
+@client.command(pass_context=True)
+async def play(ctx, url):
+    '''
+    - Play YouTube audio using URL.
+    '''
+
+    song_there = os.path.isfile("song.mp3")
+    try:
+        if song_there:
+            os.remove("song.mp3")
+            print("Removed old song file")
+    except PermissionError:
+        print("Trying to delete song file, but it's being played")
+        await ctx.send("ERROR: Music playing")
+        return
+
+    await ctx.send("Getting everything ready now")
+
+    voice = get(client.voice_clients, guild=ctx.guild)
+
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+    }
+
+    with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+        print("Downloading audio now\n")
+        ydl.download([url])
+
+    for file in os.listdir("./"):
+        if file.endswith(".mp3"):
+            name = file
+            print(f"Renamed File: {file}\n")
+            os.rename(file, "song.mp3")
+
+    voice.play(discord.FFmpegPCMAudio("song.mp3"),
+               after=lambda e: print("Song done!"))
+    voice.source = discord.PCMVolumeTransformer(voice.source)
+    voice.source.volume = 0.1
+
+    nname = name.rsplit("-", 2)
+    await ctx.send(f"Playing: {nname[0]}")
+    print("playing\n")
+
+
+@client.command(pass_context=True)
+async def pause(ctx):
+    '''
+    - Pause the playing audio.
+    '''
+
+    voice = get(client.voice_clients, guild=ctx.guild)
+
+    if voice and voice.is_playing():
+        print("Music paused")
+        voice.pause()
+        await ctx.send("Music paused")
+    else:
+        print("Music not playing failed pause")
+        await ctx.send("Music not playing failed pause")
+
+for filename in os.listdir('./cogs'):
+    if filename.endswith('.py'):
+        client.load_extension(f'cogs.{filename[:-3]}')
+
+
+@client.command(pass_context=True)
+async def resume(ctx):
+    '''
+    - Resume the paused audio.
+    '''
+    voice = get(client.voice_clients, guild=ctx.guild)
+
+    if voice and voice.is_paused():
+        print("Resumed music")
+        voice.resume()
+        await ctx.send("Resumed music")
+    else:
+        print("Music is not paused")
+        await ctx.send("Music is not paused")
+
+
+@client.command(pass_context=True)
+async def stop(ctx):
+    '''
+    - Stop the playing audio.
+    '''
+    voice = get(client.voice_clients, guild=ctx.guild)
+
+    if voice and voice.is_playing():
+        print("Music stopped")
+        voice.stop()
+        await ctx.send("Music stopped")
+    else:
+        print("No music playing failed to stop")
+        await ctx.send("No music playing failed to stop")
+
+
+# Leaderboard Function
+@client.event
+async def on_reaction_add(reaction, user):
+    if(check_leaderboard(reaction.message.id, user.id)):
+        if(reaction.emoji == u"\u25B6"):
+            page, last_user_count = get_leaderboard_page(
+                reaction.message.id, user.id)
+            if(last_user_count < page * 10):
+                return
+            rows = get_users(page+1)
+            embed = discord.Embed(title="Leaderboard", color=0x8150bc)
+            for row in rows:
+                if(row[1] != None and row[2] != None):
+                    user_name = client.get_user(int(row[1]))
+                    user_name = "#" + str(last_user_count) + \
+                        " | " + str(user_name)
+                    embed.add_field(
+                        name=user_name, value='{:,}'.format(row[2]), inline=False)
+                    last_user_count += 1
+
+            update_leaderboard(page + 1, last_user_count, reaction.message.id)
+            await reaction.message.edit(embed=embed)
+            await reaction.message.clear_reactions()
+            await reaction.message.add_reaction(u"\u25C0")
+            if(last_user_count > (page+1) * 10):
+                await reaction.message.add_reaction(u"\u25B6")
+
+        if(reaction.emoji == u"\u25C0"):
+            page, last_user_count = get_leaderboard_page(
+                reaction.message.id, user.id)
+            if(page == 1):
+                return
+            rows = get_users(page-1)
+            embed = discord.Embed(title="Leaderboard", color=0x8150bc)
+            if(last_user_count <= page * 10):
+                last_user_count -= 10 + (last_user_count-1) % 10
+            else:
+                last_user_count -= 20
+
+            for row in rows:
+                if(row[1] != None and row[2] != None):
+                    user_name = client.get_user(int(row[1]))
+                    user_name = "#" + str(last_user_count) + \
+                        " | " + str(user_name)
+                    embed.add_field(
+                        name=user_name, value='{:,}'.format(row[2]), inline=False)
+                    last_user_count += 1
+
+            update_leaderboard(page - 1, last_user_count, reaction.message.id)
+            await reaction.message.edit(embed=embed)
+            await reaction.message.clear_reactions()
+            if(page - 1 > 1):
+                await reaction.message.add_reaction(u"\u25C0")
+            await reaction.message.add_reaction(u"\u25B6")
+
+    if(reaction.emoji == u"\U0001F44D"):
+        roles = user.roles
+
+        permission = False
+
+        for role in roles:
+            if(role.name == "Manager" or role.permissions.administrator):
+                permission = True
+
+        if(permission and check_requests(reaction.message.id) and not user.bot):
+            users, points = get_users_requests(reaction.message.id)
+            split_users = users.split()
+            for user_id in split_users:
+                add_points(user_id, points)
+
+            update_requests(reaction.message.id, 1)
+            await reaction.message.add_reaction('\U00002705')
+
+
+@client.command(pass_context=True)
+async def points(ctx, command=None, username=None, point=None):
+    """- Add and remove points."""
+    # print(username)
+    if(command == None or point == None or username == None):
+        if(command == None and point == None and username == None):
+            points = get_user_point(ctx.message.author.id)
+            await ctx.send("You have " + str(points) + " points")
+            return
+        else:
+            await ctx.send("Invalid command, please check the documentation: \n!points [add/remove] <username> <points>")
+            return
+
+    roles = ctx.message.author.roles
+    permission = False
+
+    for role in roles:
+        if(role.name == "Manager" or role.permissions.administrator):
+            permission = True
+
+    if(not permission):
+        await request_points(ctx)
+        # await ctx.send("No permission")
+        return
+
+    if(command.lower() == "add"):
+        if(point.isdigit()):
+            username_id = username[2:]
+            username_id = username_id[:-1]
+            username_id = username_id.replace("!", "")
+            if(username_id.isdigit()):
+                add_points(username_id, point)
+            else:
+                from_server = ctx.guild
+                user = from_server.get_member_named(username)
+                if(user == None):
+                    await ctx.send("Invalid user")
+                    return
+                else:
+                    add_points(user.id, point)
+            await ctx.send("Points added!")
+        else:
+            await request_points()
+    else:
+        if(command.lower() == "remove"):
+            if(point.isdigit()):
+                username_id = username[2:]
+                username_id = username_id[:-1]
+                username_id = username_id.replace("!", "")
+                if(username_id.isdigit()):
+                    remove_points(username_id, point)
+                else:
+                    from_server = ctx.guild
+                    user = from_server.get_member_named(username)
+                    if(user == None):
+                        await ctx.send("Invalid user")
+                        return
+                    else:
+                        remove_points(user.id, point)
+                await ctx.send("Points removed!")
+            else:
+                await ctx.send("Invalid points number!")
+        else:
+            await ctx.send("Invalid command, please check the documentation: \n!points [add/remove] <username> <points>")
+
+
+@client.command(pass_context=True)
+async def leaderboard(ctx):
+    """- Displays the score and rank based on points system."""
+    rows = get_users(1)
+    embed = discord.Embed(title="Leaderboard", color=0x8150bc)
+    count = 1
+    for row in rows:
+        if(row[1] != None and row[2] != None):
+            user = client.get_user(int(row[1]))
+            user = "#" + str(count) + " | " + str(user)
+            embed.add_field(
+                name=user, value='{:,}'.format(row[2]), inline=False)
+            count += 1
+
+    msg_sent = await ctx.send(embed=embed)
+    add_leaderboard(ctx.message.author.id, msg_sent.id, count)
+    if(count == 11):
+        await msg_sent.add_reaction(u"\u25B6")
 
 
 @tasks.loop(seconds=200)
